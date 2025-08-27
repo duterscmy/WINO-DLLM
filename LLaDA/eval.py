@@ -135,7 +135,7 @@ def run_single_task_evaluation(config, model, tokenizer):
                 gen_code = extract_answer_fn(gen_str, doc['entry_point'])
                 result_item['completion'] = gen_code
             else:
-                pred = extract_answer_fn(gen_str, doc['entry_point'])
+                pred = extract_answer_fn(gen_str, doc)
                 result_item['completion'] = pred
             if 'task_id' in gt_doc: result_item['task_id'] = gt_doc['task_id']
             
