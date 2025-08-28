@@ -50,7 +50,6 @@ datasets_cache/
 
 # Project-specific
 models/
-data/
 outputs/
 results/
 __results__/
