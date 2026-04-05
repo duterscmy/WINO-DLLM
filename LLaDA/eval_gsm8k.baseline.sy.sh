@@ -11,6 +11,7 @@
 ### 激活conda环境
 source ~/.bashrc # 你的环境名
 conda activate ttrl_env
+cd /mnt/fast/nobackup/scratch4weeks/mc03002/WINO-DLLM/LLaDA
 
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_DATASETS_OFFLINE=0
