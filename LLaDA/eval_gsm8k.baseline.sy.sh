@@ -9,8 +9,8 @@
 #SBATCH -e slurm.%j.%N.err
 
 ### 激活conda环境
-source ~/.bashrc # 你的环境名
-conda activate ttrl_env
+# source ~/.bashrc # 你的环境名
+# conda activate ttrl_env
 
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_DATASETS_OFFLINE=0
@@ -18,4 +18,4 @@ export CUDA_VISIBLE_DEVICES=0
 #  --limit 256
 length=256
 
-CUDA_VISIBLE_DEVICES=0 python eval.py --config ./configs/gsm8k.baseline.yaml &> baseline-gsm8k-ns0-${length}.log
+CUDA_VISIBLE_DEVICES=0 python eval.py --config ./configs/gsm8k.baseline.yaml #&> baseline-gsm8k-ns0-${length}.log
