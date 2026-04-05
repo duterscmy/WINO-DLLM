@@ -198,7 +198,7 @@ def decoding_wino(model, prompt, gen_length=128, block_length=128, temperature=0
     return x_block[:, :prompt.shape[1] + gen_length], step
 
 
-
+@torch.no_grad()
 def decoding_soar(model, prompt, steps=128, gen_length=128, block_length=128, temperature=0.,
                         cfg_scale=0., remasking='low_confidence', mask_id=126336, max_beam_size=2, log=False, logits_eos_inf=False, confidence_eos_eot_inf=False, **kwargs):
     '''

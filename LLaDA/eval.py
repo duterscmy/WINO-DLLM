@@ -10,7 +10,7 @@ import yaml
 import jsonlines
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from modeling_llada import LLaDAModelLM
-from decoding import decoding_default, decoding_wino
+from decoding import decoding_default, decoding_wino, decoding_soar
 import dataset_utils
 from human_eval.evaluation import evaluate_functional_correctness
 import tempfile
