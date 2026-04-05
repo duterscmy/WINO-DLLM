@@ -10,7 +10,7 @@
 
 ### 激活conda环境
 source ~/.bashrc # 你的环境名
-conda activate ttrl_eval
+conda activate ttrl_env
 
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_DATASETS_OFFLINE=0
