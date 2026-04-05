@@ -36,6 +36,7 @@ def main():
 def get_generation_function(method_name):
     if method_name == 'default': return decoding_default
     elif method_name == 'wino': return decoding_wino
+    elif method_name == 'soar': return decoding_soar
     else: raise ValueError(f"Unknown method: {method_name}")
 
 def run_single_task_evaluation(config, model, tokenizer):
