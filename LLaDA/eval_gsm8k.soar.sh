@@ -17,4 +17,4 @@ export CUDA_VISIBLE_DEVICES=0
 #  --limit 256
 length=256
 
-CUDA_VISIBLE_DEVICES=0 python eval.py --config ./configs/gsm8k.soar.yaml &> baseline-gsm8k-ns0-${length}.log
+CUDA_VISIBLE_DEVICES=0 python eval.py --config ./configs/gsm8k.soar.yaml &> soar-gsm8k-ns0-${length}.thresh08.log
