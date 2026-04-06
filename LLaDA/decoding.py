@@ -672,9 +672,9 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
             block_mask_confidence = confidence[0, block_mask_positions]
             
             # SOAR的策略选择
-            confidence_threshold = 0.80
+            confidence_threshold = 0.60
             min_parallel_tokens = 1
-            max_parallel_tokens = 5
+            max_parallel_tokens = 32
             
             high_confidence_mask = block_mask_confidence >= confidence_threshold
             high_confidence_indices = torch.where(high_confidence_mask)[0]
