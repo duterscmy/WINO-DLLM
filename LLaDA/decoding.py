@@ -577,8 +577,11 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
     
     assert gen_length % block_length == 0
     num_blocks = gen_length // block_length
-    assert steps % num_blocks == 0
-    steps_per_block = steps // num_blocks
+    
+    # 修复：动态调整steps_per_block，不要求steps能被num_blocks整除
+    steps_per_block = max(1, steps // num_blocks)
+    # 剩余步数分配给前面的blocks
+    remaining_steps = steps - steps_per_block * num_blocks
     
     total_steps = 0
     
@@ -669,9 +672,9 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
             block_mask_confidence = confidence[0, block_mask_positions]
             
             # SOAR的策略选择
-            confidence_threshold = 0.60
+            confidence_threshold = 0.80
             min_parallel_tokens = 1
-            max_parallel_tokens = 32
+            max_parallel_tokens = 5
             
             high_confidence_mask = block_mask_confidence >= confidence_threshold
             high_confidence_indices = torch.where(high_confidence_mask)[0]
@@ -822,16 +825,19 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         print(f"  - Remaining length: {remaining_length}")
         print(f"  - Only updating positions {block_start}-{block_end-1}")
         
+        # 计算当前block的步数（动态分配，确保至少1步）
+        steps_for_block = max(1, steps // num_blocks)
+        if num_block < steps % num_blocks:
+            steps_for_block += 1  # 分配剩余步数给前面的blocks
+        
         # 调用支持位置掩码的SOAR
         # 注意：position_mask只传入生成部分的掩码，长度为remaining_length
-        # 但我们需要调整一下，因为SOAR内部的gen_length是remaining_length
-        # 所以position_mask需要相应裁剪
         position_mask_for_soar = position_mask[num_block * block_length:]
         
         soar_decoded, soar_steps = decoding_soar_with_mask(
             model=model,
             prompt=current_prompt,
-            steps=steps // num_blocks,  # 每个block分配的总步数
+            steps=steps_for_block,
             gen_length=remaining_length,
             block_length=block_length,
             temperature=temperature,
