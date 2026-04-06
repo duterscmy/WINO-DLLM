@@ -803,10 +803,10 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         block_start = prompt.shape[1] + num_block * block_length
         block_end = prompt.shape[1] + (num_block + 1) * block_length
         
-        print(f"\n{'='*50}")
-        print(f"Block {num_block + 1}/{num_blocks}")
-        print(f"Positions: {block_start} to {block_end}")
-        print(f"{'='*50}")
+        # print(f"\n{'='*50}")
+        # print(f"Block {num_block + 1}/{num_blocks}")
+        # print(f"Positions: {block_start} to {block_end}")
+        # print(f"{'='*50}")
         
         # ============ 阶段1: SOAR解码当前block ============
         # 创建位置掩码：只允许更新当前block内的token（相对于生成部分的位置）
@@ -820,10 +820,10 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         # 剩余需要生成的总长度
         remaining_length = gen_length - num_block * block_length
         
-        print(f"Phase 1: SOAR decoding with full context...")
-        print(f"  - Prompt length: {current_prompt.shape[1]}")
-        print(f"  - Remaining length: {remaining_length}")
-        print(f"  - Only updating positions {block_start}-{block_end-1}")
+        # print(f"Phase 1: SOAR decoding with full context...")
+        # print(f"  - Prompt length: {current_prompt.shape[1]}")
+        # print(f"  - Remaining length: {remaining_length}")
+        # print(f"  - Only updating positions {block_start}-{block_end-1}")
         
         # 计算当前block的步数（动态分配，确保至少1步）
         steps_for_block = max(1, steps // num_blocks)
@@ -857,15 +857,15 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         x[:, block_start:block_end] = current_block_decoded
         total_steps += soar_steps
         
-        print(f"  - SOAR completed in {soar_steps} steps")
-        print(f"  - Decoded {block_length} tokens")
+        # print(f"  - SOAR completed in {soar_steps} steps")
+        # print(f"  - Decoded {block_length} tokens")
         
         # 打印解码的token（前10个）
         decoded_tokens = current_block_decoded[0].tolist()
-        print(f"  - Decoded tokens: {decoded_tokens[:10]}{'...' if len(decoded_tokens) > 10 else ''}")
+        # print(f"  - Decoded tokens: {decoded_tokens[:10]}{'...' if len(decoded_tokens) > 10 else ''}")
         
         # ============ 阶段2: Wino风格的重掩码验证 ============
-        print(f"\nPhase 2: Wino-style verification and remasking...")
+        # print(f"\nPhase 2: Wino-style verification and remasking...")
         
         for refine_iter in range(num_refinement_rounds):
             # 计算完整序列的置信度
@@ -888,17 +888,18 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
             low_conf = (block_confidence < threshold_back) & (~is_masked)
             
             if not low_conf.any():
-                print(f"  - Round {refine_iter + 1}: No low-confidence tokens found")
+                # print(f"  - Round {refine_iter + 1}: No low-confidence tokens found")
                 break
             
             low_conf_count = low_conf.sum().item()
-            print(f"  - Round {refine_iter + 1}: Found {low_conf_count} low-confidence tokens")
+            # print(f"  - Round {refine_iter + 1}: Found {low_conf_count} low-confidence tokens")
             
             # 找出低置信度token的位置和置信度
             low_conf_positions = torch.where(low_conf)[0] + block_start
             low_conf_values = block_confidence[low_conf]
             for pos, conf in zip(low_conf_positions.tolist(), low_conf_values.tolist()):
-                print(f"    - Position {pos}: confidence {conf:.4f}")
+                # print(f"    - Position {pos}: confidence {conf:.4f}")
+                pass
             
             # 重掩码低置信度的token
             remask_positions = low_conf_positions
@@ -942,12 +943,12 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
                 total_steps += 1
                 sub_iter += 1
                 
-                print(f"      - Refined position {best_pos}: token {best_token}, confidence {best_conf:.4f}")
+                # print(f"      - Refined position {best_pos}: token {best_token}, confidence {best_conf:.4f}")
             
             # 检查是否还有未解码的mask
             if remaining_to_decode:
-                print(f"  - Warning: {len(remaining_to_decode)} positions still masked after refinement")
-        
+                # print(f"  - Warning: {len(remaining_to_decode)} positions still masked after refinement")
+                pass
         # 最终验证当前block
         with torch.no_grad():
             logits = model(x).logits
@@ -957,11 +958,11 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         final_low_conf = (final_confidence < threshold_back).sum().item()
         final_masked = (x[0, block_start:block_end] == mask_id).sum().item()
         
-        print(f"\nBlock {num_block + 1} summary:")
-        print(f"  - Final masked tokens: {final_masked}/{block_length}")
-        print(f"  - Low confidence tokens: {final_low_conf}/{block_length}")
-        print(f"  - Average confidence: {final_confidence.mean().item():.4f}")
-        print(f"  - Total steps so far: {total_steps}")
+        # print(f"\nBlock {num_block + 1} summary:")
+        # print(f"  - Final masked tokens: {final_masked}/{block_length}")
+        # print(f"  - Low confidence tokens: {final_low_conf}/{block_length}")
+        # print(f"  - Average confidence: {final_confidence.mean().item():.4f}")
+        # print(f"  - Total steps so far: {total_steps}")
     
     print(f"\n{'='*50}")
     print(f"Decoding complete!")
