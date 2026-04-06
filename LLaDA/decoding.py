@@ -549,14 +549,12 @@ def decoding_soar(model, prompt, steps=128, gen_length=128, block_length=128, te
 
 
 
-def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_length=128, temperature=0.,
-                              cfg_scale=0., remasking='low_confidence', mask_id=126336, 
-                              max_beam_size=2, threshold_back=0.9, threshold=0.6):
+def decoding_wino_soar_hybrid_v2(model, prompt, steps=128, gen_length=128, block_length=32,
+                                  temperature=0., cfg_scale=0., remasking='low_confidence',
+                                  mask_id=126336, max_beam_size=2, threshold_back=0.9,
+                                  threshold=0.6):
     """
-    混合解码策略：
-    1. 对每个block使用SOAR进行初始解码
-    2. 对解码结果应用Wino风格的后向重掩码（remasking）
-    3. 迭代修正低置信度的token
+    混合解码策略的简化稳定版本
     """
     device = model.device
     
@@ -566,167 +564,84 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
     
     assert gen_length % block_length == 0
     num_blocks = gen_length // block_length
-    steps_per_block = steps // num_blocks
+    steps_per_block = max(1, steps // num_blocks)
     
     total_steps = 0
     
     for num_block in range(num_blocks):
         block_start = prompt.shape[1] + num_block * block_length
         block_end = prompt.shape[1] + (num_block + 1) * block_length
-        
-        print(f"\n=== Processing Block {num_block + 1}/{num_blocks} ===")
-        print(f"Block positions: {block_start} to {block_end}")
-        
-        # 阶段1: 使用SOAR解码当前block
         current_prompt = x[:, :block_start]
-        current_gen_length = block_length
         
-        print(f"Phase 1: SOAR decoding for block {num_block + 1}...")
-        
-        # 创建当前block的输入（包含之前的mask）
-        current_input = torch.cat([current_prompt, x[:, block_start:block_end]], dim=1)
-        
-        # 使用SOAR解码当前block
+        # 阶段1: SOAR解码
         soar_decoded, soar_steps = decoding_soar(
-            model=model,
-            prompt=current_prompt,
-            steps=steps_per_block,
-            gen_length=current_gen_length,
-            block_length=current_gen_length,  # 整个block一次性解码
-            temperature=temperature,
-            cfg_scale=cfg_scale,
-            remasking=remasking,
-            mask_id=mask_id,
-            max_beam_size=max_beam_size,
-            log=False
+            model=model, prompt=current_prompt, steps=steps_per_block,
+            gen_length=block_length, block_length=block_length, temperature=temperature,
+            cfg_scale=cfg_scale, remasking=remasking, mask_id=mask_id,
+            max_beam_size=max_beam_size, log=False
         )
         
-        # 提取SOAR解码的block部分
-        decoded_block = soar_decoded[:, current_prompt.shape[1]:]
-        x[:, block_start:block_end] = decoded_block
+        x[:, block_start:block_end] = soar_decoded[:, current_prompt.shape[1]:]
         total_steps += soar_steps
         
-        print(f"SOAR decoding completed in {soar_steps} steps")
-        print(f"Initial decoded block: {decoded_block[0].tolist()}")
-        
-        # 阶段2: Wino风格的后向重掩码和迭代修正
-        print(f"Phase 2: Wino-style remasking and refinement...")
-        
-        # 准备当前完整序列（包括之前所有blocks）
-        current_full_seq = x[:, :block_end]
-        
-        # 计算当前block中每个token的置信度
-        with torch.no_grad():
-            # 获取logits
-            if cfg_scale > 0:
-                # 支持CFG
-                unconditional_seq = current_full_seq.clone()
-                unconditional_seq[:, :prompt.shape[1]] = mask_id
-                combined = torch.cat([current_full_seq, unconditional_seq], dim=0)
-                logits = model(combined).logits
-                conditional_logits, unconditional_logits = torch.chunk(logits, 2, dim=0)
-                logits = unconditional_logits + (cfg_scale + 1) * (conditional_logits - unconditional_logits)
-            else:
-                logits = model(current_full_seq).logits
-            
+        # 阶段2: Wino重掩码修正
+        for refine_iter in range(5):  # 最多5次修正
             # 计算置信度
-            p = F.softmax(logits.to(torch.float64), dim=-1)
-            current_tokens = current_full_seq
-            confidence = torch.gather(p, dim=-1, index=current_tokens.unsqueeze(-1)).squeeze(-1)
-        
-        # 只关注当前block的置信度
-        block_confidence = confidence[0, block_start:block_end]
-        block_tokens = x[0, block_start:block_end]
-        mask_index = (block_tokens == mask_id)
-        
-        # 找出低置信度的token（需要重新掩码）
-        low_confidence_mask = (block_confidence < threshold_back) & (~mask_index)
-        
-        if low_confidence_mask.any():
-            print(f"Found {low_confidence_mask.sum().item()} low-confidence tokens to remask")
-            print(f"Low confidence positions: {torch.where(low_confidence_mask)[0].tolist()}")
-            print(f"Confidence values: {block_confidence[low_confidence_mask].tolist()}")
-            
-            # 重新掩码低置信度的token
-            remask_positions = torch.where(low_confidence_mask)[0] + block_start
-            x[0, remask_positions] = mask_id
-            total_steps += 1
-            
-            # 阶段3: 迭代修正重掩码的token（使用Wino的迭代解码）
-            print(f"Phase 3: Iterative refinement of remasked tokens...")
-            
-            # 获取需要重新解码的位置
-            remask_index_in_block = torch.where(low_confidence_mask)[0]
-            
-            # 对重掩码的token进行迭代解码
-            max_refinement_steps = 10  # 最多迭代10次
-            refinement_step = 0
-            
-            while refinement_step < max_refinement_steps:
-                # 只计算需要重新解码的部分
-                current_full_seq = x[:, :block_end]
+            with torch.no_grad():
+                logits = model(x).logits
+                if cfg_scale > 0:
+                    uncond = x.clone()
+                    uncond[:, :prompt.shape[1]] = mask_id
+                    combined = torch.cat([x, uncond], dim=0)
+                    logits_combined = model(combined).logits
+                    cond_logits, uncond_logits = torch.chunk(logits_combined, 2, dim=0)
+                    logits = uncond_logits + (cfg_scale + 1) * (cond_logits - uncond_logits)
                 
+                p = F.softmax(logits.to(torch.float64), dim=-1)
+                confidence = torch.gather(p, dim=-1, index=x.unsqueeze(-1)).squeeze(-1)
+            
+            # 检查当前block的低置信度token
+            block_confidence = confidence[0, block_start:block_end]
+            is_masked = (x[0, block_start:block_end] == mask_id)
+            low_conf = (block_confidence < threshold_back) & (~is_masked)
+            
+            if not low_conf.any():
+                break
+            
+            # 重掩码
+            remask_positions = torch.where(low_conf)[0] + block_start
+            x[0, remask_positions] = mask_id
+            
+            # 重新解码这些位置（一次解码一个）
+            for _ in range(len(remask_positions)):
                 with torch.no_grad():
+                    logits = model(x).logits
                     if cfg_scale > 0:
-                        unconditional_seq = current_full_seq.clone()
-                        unconditional_seq[:, :prompt.shape[1]] = mask_id
-                        combined = torch.cat([current_full_seq, unconditional_seq], dim=0)
-                        logits = model(combined).logits
-                        conditional_logits, unconditional_logits = torch.chunk(logits, 2, dim=0)
-                        logits = unconditional_logits + (cfg_scale + 1) * (conditional_logits - unconditional_logits)
-                    else:
-                        logits = model(current_full_seq).logits
+                        uncond = x.clone()
+                        uncond[:, :prompt.shape[1]] = mask_id
+                        combined = torch.cat([x, uncond], dim=0)
+                        logits_combined = model(combined).logits
+                        cond_logits, uncond_logits = torch.chunk(logits_combined, 2, dim=0)
+                        logits = uncond_logits + (cfg_scale + 1) * (cond_logits - uncond_logits)
                     
                     logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
                     x0 = torch.argmax(logits_with_noise, dim=-1)
                     p = F.softmax(logits.to(torch.float64), dim=-1)
                     x0_p = torch.gather(p, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
                 
-                # 只更新重掩码的位置
-                current_mask_index = (x == mask_id)
-                confidence_for_masked = torch.where(current_mask_index, x0_p, -torch.inf)
-                
-                # 选择置信度最高的token进行解码
-                transfer_index = confidence_for_masked > threshold
-                
-                if not transfer_index.any():
-                    # 如果没有超过阈值的，选择置信度最高的一个
-                    max_conf_idx = torch.argmax(confidence_for_masked)
-                    transfer_index = torch.zeros_like(confidence_for_masked, dtype=torch.bool)
-                    transfer_index.view(-1)[max_conf_idx] = True
-                
-                # 更新token
-                x[transfer_index] = x0[transfer_index]
-                total_steps += 1
-                
-                # 检查是否所有重掩码的token都已解码
-                remaining_masks = (x[:, block_start:block_end] == mask_id).sum()
-                if remaining_masks == 0:
-                    print(f"All remasked tokens refined in {refinement_step + 1} steps")
-                    break
-                
-                refinement_step += 1
+                # 只解码当前block内的mask位置
+                block_mask = (x[0, block_start:block_end] == mask_id)
+                if block_mask.any():
+                    block_mask_positions = torch.where(block_mask)[0] + block_start
+                    # 选择置信度最高的位置解码
+                    conf_at_masks = x0_p[0, block_mask_positions]
+                    best_idx = torch.argmax(conf_at_masks)
+                    best_pos = block_mask_positions[best_idx]
+                    x[0, best_pos] = x0[0, best_pos]
+                    total_steps += 1
             
-            # 最终验证：再次计算置信度
-            with torch.no_grad():
-                current_full_seq = x[:, :block_end]
-                logits = model(current_full_seq).logits
-                p = F.softmax(logits.to(torch.float64), dim=-1)
-                final_confidence = torch.gather(p, dim=-1, index=x[:, block_start:block_end].unsqueeze(-1)).squeeze(-1)
-                
-            final_low_conf = (final_confidence < threshold_back).sum().item()
-            if final_low_conf > 0:
-                print(f"Warning: {final_low_conf} tokens still have low confidence after refinement")
-            else:
-                print(f"All tokens in block {num_block + 1} have high confidence")
-        else:
-            print(f"All tokens in block {num_block + 1} have high confidence, no remasking needed")
-        
-        # 打印block解码统计
-        final_block = x[0, block_start:block_end]
-        print(f"Final block {num_block + 1}: {final_block.tolist()}")
-        print(f"Block completion: {(final_block != mask_id).sum().item()}/{block_length} tokens")
-        print(f"Total steps so far: {total_steps}")
+            total_steps += 1
     
     return x, total_steps
+
 #
