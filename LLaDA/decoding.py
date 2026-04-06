@@ -556,8 +556,8 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
     支持位置掩码的SOAR解码
     
     Args:
-        position_mask: (1, seq_len) 的bool张量，True的位置才会被更新
-                      如果为None，则更新所有mask位置
+        position_mask: (1, gen_length) 的bool张量，True的位置才会被更新
+                      只针对生成部分，不包括prompt
     """
     device = model.device
     
@@ -565,9 +565,13 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
     x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(device)
     x[:, :prompt.shape[1]] = prompt.clone()
     
-    # 如果没有提供position_mask，则默认更新所有位置
-    if position_mask is None:
-        position_mask = torch.ones_like(x, dtype=torch.bool)
+    # 构建完整的position_mask（包括prompt部分）
+    full_position_mask = torch.ones_like(x, dtype=torch.bool)  # 默认所有位置都可更新
+    if position_mask is not None:
+        # position_mask只针对生成部分，需要扩展到完整序列
+        full_position_mask[:, prompt.shape[1]:] = position_mask
+        # prompt部分不可更新
+        full_position_mask[:, :prompt.shape[1]] = False
     
     prompt_index = (x != mask_id)
     
@@ -585,8 +589,8 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
         # 检查是否还有需要更新的mask
         has_remaining_masks = False
         for seq, _, _, _ in beam:
-            # 只考虑position_mask指定的位置
-            relevant_mask = (seq == mask_id) & position_mask
+            # 只考虑full_position_mask指定的位置
+            relevant_mask = (seq == mask_id) & full_position_mask
             if relevant_mask.any():
                 has_remaining_masks = True
                 break
@@ -638,7 +642,7 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
             x0_p = batch_x0_p[beam_idx:beam_idx+1]
             
             # 检查是否还有允许更新的mask
-            mask_index = (seq == mask_id) & position_mask
+            mask_index = (seq == mask_id) & full_position_mask
             if not mask_index.any():
                 new_beam_candidates.append((seq, cumulative_log_prob, current_block, records))
                 continue
@@ -665,9 +669,9 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
             block_mask_confidence = confidence[0, block_mask_positions]
             
             # SOAR的策略选择
-            confidence_threshold = 0.80
+            confidence_threshold = 0.60
             min_parallel_tokens = 1
-            max_parallel_tokens = 5
+            max_parallel_tokens = 32
             
             high_confidence_mask = block_mask_confidence >= confidence_threshold
             high_confidence_indices = torch.where(high_confidence_mask)[0]
@@ -700,7 +704,7 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
                 
                 new_current_block = current_block
                 # 检查当前block是否还有允许更新的mask
-                remaining_in_block = (new_seq[0, block_start:block_end] == mask_id) & position_mask[0, block_start:block_end]
+                remaining_in_block = (new_seq[0, block_start:block_end] == mask_id) & full_position_mask[0, block_start:block_end]
                 if not remaining_in_block.any():
                     new_current_block = min(current_block + 1, num_blocks - 1)
                 
@@ -723,7 +727,7 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
                     new_log_prob = cumulative_log_prob + np.log(max(prob, 1e-10))
                     
                     new_current_block = current_block
-                    remaining_in_block = (new_seq[0, block_start:block_end] == mask_id) & position_mask[0, block_start:block_end]
+                    remaining_in_block = (new_seq[0, block_start:block_end] == mask_id) & full_position_mask[0, block_start:block_end]
                     if not remaining_in_block.any():
                         new_current_block = min(current_block + 1, num_blocks - 1)
                     
@@ -746,7 +750,9 @@ def decoding_soar_with_mask(model, prompt, steps=128, gen_length=128, block_leng
         uniq_new_beam_candidates = []
         seen = set()
         for tensor, log_prob, block_progress, records in new_beam_candidates:
-            tensor_tuple = tuple(tensor.flatten().cpu().numpy().tolist())
+            # 只对生成部分进行去重（忽略prompt部分）
+            gen_part = tensor[0, prompt.shape[1]:]
+            tensor_tuple = tuple(gen_part.cpu().numpy().tolist())
             if tensor_tuple not in seen:
                 seen.add(tensor_tuple)
                 uniq_new_beam_candidates.append((tensor, log_prob, block_progress, records))
@@ -800,9 +806,10 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         print(f"{'='*50}")
         
         # ============ 阶段1: SOAR解码当前block ============
-        # 创建位置掩码：只允许更新当前block内的token
-        position_mask = torch.zeros_like(x, dtype=torch.bool)
-        position_mask[:, block_start:block_end] = True
+        # 创建位置掩码：只允许更新当前block内的token（相对于生成部分的位置）
+        # position_mask的长度是gen_length，True的位置表示可以更新
+        position_mask = torch.zeros(gen_length, dtype=torch.bool, device=device)
+        position_mask[num_block * block_length:(num_block + 1) * block_length] = True
         
         # 创建prompt：所有已确定的token（包括之前blocks）
         current_prompt = x[:, :block_start]
@@ -816,8 +823,11 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
         print(f"  - Only updating positions {block_start}-{block_end-1}")
         
         # 调用支持位置掩码的SOAR
-        # SOAR能看到完整的序列（current_prompt + 剩余mask位置）
-        # 但只更新position_mask指定的位置
+        # 注意：position_mask只传入生成部分的掩码，长度为remaining_length
+        # 但我们需要调整一下，因为SOAR内部的gen_length是remaining_length
+        # 所以position_mask需要相应裁剪
+        position_mask_for_soar = position_mask[num_block * block_length:]
+        
         soar_decoded, soar_steps = decoding_soar_with_mask(
             model=model,
             prompt=current_prompt,
@@ -829,7 +839,7 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
             remasking=remasking,
             mask_id=mask_id,
             max_beam_size=max_beam_size,
-            position_mask=position_mask[:, block_start:],  # 传递相对位置的mask
+            position_mask=position_mask_for_soar.unsqueeze(0),  # (1, remaining_length)
             log=False
         )
         
@@ -954,4 +964,3 @@ def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_le
     print(f"{'='*50}")
     
     return x, total_steps
-#
