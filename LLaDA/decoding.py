@@ -549,7 +549,7 @@ def decoding_soar(model, prompt, steps=128, gen_length=128, block_length=128, te
 
 
 
-def decoding_wino_soar_hybrid_v2(model, prompt, steps=128, gen_length=128, block_length=32,
+def decoding_wino_soar_hybrid(model, prompt, steps=128, gen_length=128, block_length=32,
                                   temperature=0., cfg_scale=0., remasking='low_confidence',
                                   mask_id=126336, max_beam_size=2, threshold_back=0.9,
                                   threshold=0.6):
