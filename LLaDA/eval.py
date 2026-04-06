@@ -10,7 +10,7 @@ import yaml
 import jsonlines
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from modeling_llada import LLaDAModelLM
-from decoding import decoding_default, decoding_wino, decoding_soar
+from decoding import decoding_default, decoding_wino, decoding_soar, decoding_wino_soar_hybrid
 import dataset_utils
 from human_eval.evaluation import evaluate_functional_correctness
 import tempfile
@@ -37,6 +37,7 @@ def get_generation_function(method_name):
     if method_name == 'default': return decoding_default
     elif method_name == 'wino': return decoding_wino
     elif method_name == 'soar': return decoding_soar
+    elif method_name == 'soar_wino': return decoding_wino_soar_hybrid
     else: raise ValueError(f"Unknown method: {method_name}")
 
 def run_single_task_evaluation(config, model, tokenizer):
